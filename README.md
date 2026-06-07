@@ -10,6 +10,7 @@
 ![framework](https://img.shields.io/badge/WinUI%203-Windows%20App%20SDK-512BD4)
 ![dotnet](https://img.shields.io/badge/.NET%208-x64-512BD4?logo=dotnet&logoColor=white)
 ![lang](https://img.shields.io/badge/UI-简体中文-ff7700)
+![license](https://img.shields.io/badge/license-MIT-green)
 
 </div>
 
@@ -90,5 +91,9 @@ MainWindow.xaml(.cs)   全部 UI：三页（歌曲 / 角色 / 排查）+ 两个�
 Assets/AppIcon.{png,ico}  应用图标（PNG 源图 + 生成的多尺寸 ICO）
 docs/                  README 截图
 ```
+
+## 📄 许可
+
+[MIT](LICENSE) © Erika
 
 > 非官方粉丝向工具，仅供个人学习与本地管理使用。
