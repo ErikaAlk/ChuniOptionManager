@@ -193,7 +193,26 @@ public sealed partial class MainWindow : Window
         };
         var baseIdBox = new TextBox { PlaceholderText = "角色基ID（例如 2469）" };
         var skinIdBox = new TextBox { Text = "0" };
-        var finalIdBox = new TextBox { IsReadOnly = true };
+        var finalIdBox = new TextBox { IsReadOnly = true, PlaceholderText = "基 ID 留空＝自动分配（≥114514）" };
+
+        // 最终 ID = 基 ID × 10 + 皮肤 ID；基 ID 留空表示自动分配。实时回填到只读的「最终 ID」框。
+        void UpdateFinalId()
+        {
+            if (string.IsNullOrWhiteSpace(baseIdBox.Text))
+            {
+                finalIdBox.Text = "";
+                return;
+            }
+
+            finalIdBox.Text = TryComposeCharacterId(baseIdBox.Text, skinIdBox.Text, out var composed)
+                ? composed.ToString()
+                : "无效";
+        }
+
+        baseIdBox.TextChanged += (_, _) => UpdateFinalId();
+        skinIdBox.TextChanged += (_, _) => UpdateFinalId();
+        UpdateFinalId();
+
         var nameBox = new TextBox { PlaceholderText = "角色显示名" };
         var illustratorBox = new TextBox { PlaceholderText = "绘师 / illustratorName.str（可选，不填则 Invalid）" };
         var worksBox = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
@@ -281,10 +300,21 @@ public sealed partial class MainWindow : Window
         }
 
         var selectedWorks = (worksBox.SelectedItem as ComboBoxItem)?.Tag as Models.WorksItem;
+
+        // 解析显式 ID：基 ID 留空＝自动分配（0）；填了就必须能组成有效 ID，否则拦下不提交。
+        var requestedId = 0;
+        if (!string.IsNullOrWhiteSpace(baseIdBox.Text)
+            && !TryComposeCharacterId(baseIdBox.Text, skinIdBox.Text, out requestedId))
+        {
+            ShowStatus("ID 无效", "基 ID 需为正整数、皮肤 ID 需为 0–9；或清空基 ID 以自动分配。", InfoBarSeverity.Error);
+            return;
+        }
+
         try
         {
-            OptionRepository.AddCharacter(_currentRoot, new AddCharacterRequest
+            var newId = OptionRepository.AddCharacter(_currentRoot, new AddCharacterRequest
             {
+                Id = requestedId,
                 Name = nameBox.Text,
                 SortName = nameBox.Text,
                 IllustratorName = illustratorBox.Text,
@@ -301,7 +331,7 @@ public sealed partial class MainWindow : Window
                     })
             });
             await LoadCatalogAsync();
-            ShowStatus("已添加角色", $"{nameBox.Text.Trim()} 已写入 AZUR，并设置 priority=999。", InfoBarSeverity.Success);
+            ShowStatus("已添加角色", $"{nameBox.Text.Trim()} 已写入 AZUR（ID {newId}，priority=999）。", InfoBarSeverity.Success);
         }
         catch (Exception ex)
         {
@@ -317,6 +347,26 @@ public sealed partial class MainWindow : Window
             IsReadOnly = true,
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
+    }
+
+    // 由基 ID 与皮肤 ID 组成最终角色 ID：最终 ID = 基 ID × 10 + 皮肤 ID（皮肤为个位 0–9，0 即默认皮肤）。
+    // 例：基 11451 + 皮肤 4 = 114514（模板号）；基 2469 + 皮肤 0 = 24690。
+    private static bool TryComposeCharacterId(string baseText, string skinText, out int composed)
+    {
+        composed = 0;
+        if (!int.TryParse((baseText ?? "").Trim(), out var baseId) || baseId <= 0)
+        {
+            return false;
+        }
+
+        var normalizedSkin = string.IsNullOrWhiteSpace(skinText) ? "0" : skinText.Trim();
+        if (!int.TryParse(normalizedSkin, out var skinId) || skinId is < 0 or > 9)
+        {
+            return false;
+        }
+
+        composed = baseId * 10 + skinId;
+        return true;
     }
 
     private FrameworkElement CreateIdentityPanel(
@@ -510,9 +560,18 @@ public sealed partial class MainWindow : Window
         var sourceHeight = 1;
         if (!string.IsNullOrWhiteSpace(selectedPath) && File.Exists(selectedPath))
         {
-            using var image = System.Drawing.Image.FromFile(selectedPath);
-            sourceWidth = image.Width;
-            sourceHeight = image.Height;
+            // 防御：初始图片可能在两次打开之间被删/改成 GDI+ 读不了的格式，读失败就当作未选图，别让裁剪窗崩掉。
+            try
+            {
+                using var image = System.Drawing.Image.FromFile(selectedPath);
+                sourceWidth = image.Width;
+                sourceHeight = image.Height;
+            }
+            catch (Exception ex)
+            {
+                App.LogCrash("MainWindow.ShowQuickCropWindow.LoadImage", ex);
+                selectedPath = "";
+            }
         }
 
         var panes = new[]
@@ -750,7 +809,6 @@ public sealed partial class MainWindow : Window
         picker.FileTypeFilter.Add(".jpg");
         picker.FileTypeFilter.Add(".jpeg");
         picker.FileTypeFilter.Add(".bmp");
-        picker.FileTypeFilter.Add(".webp");
         InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
         var file = await picker.PickSingleFileAsync();
         if (file is null)
@@ -758,8 +816,19 @@ public sealed partial class MainWindow : Window
             return null;
         }
 
-        using var image = System.Drawing.Image.FromFile(file.Path);
-        return (file.Path, image.Width, image.Height);
+        // System.Drawing (GDI+) 读不了的图（WebP、损坏文件、改了扩展名的非图片）会抛异常；
+        // 这里在 async void 的上传回调里，不接住就会变成未处理异常直接崩掉整个程序。
+        try
+        {
+            using var image = System.Drawing.Image.FromFile(file.Path);
+            return (file.Path, image.Width, image.Height);
+        }
+        catch (Exception ex)
+        {
+            App.LogCrash("MainWindow.PickSourceImage", ex);
+            ShowStatus("无法读取图片", "请选择有效的 PNG / JPG / BMP 图片（不支持 WebP 等格式）。", InfoBarSeverity.Error);
+            return null;
+        }
     }
 
     private void PopulateWorksBox(ComboBox worksBox, int selectId)

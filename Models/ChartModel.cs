@@ -36,9 +36,8 @@ public sealed class ChartModel : INotifyPropertyChanged
         }
     }
 
-    public string DisplayDifficulty => Difficulty.Equals("ULTIMA", StringComparison.OrdinalIgnoreCase)
-        ? "ULTIMA"
-        : Difficulty;
+    // Difficulty 在解析时已被 NormalizeDifficulty 归一成大写规范值（含 ULTRA→ULTIMA），这里直接返回即可。
+    public string DisplayDifficulty => Difficulty;
 
     public string LevelText
     {
@@ -91,37 +90,23 @@ public static class DifficultyPalette
         var key = Normalize(difficulty);
         if (key == "WORLD'S END" || key == "WORLDSEND")
         {
-            return new LinearGradientBrush
-            {
-                StartPoint = new Point(0, 0.5),
-                EndPoint = new Point(1, 0.5),
-                GradientStops =
-                {
-                    new GradientStop { Color = ColorHelper.FromArgb(255, 255, 44, 76), Offset = 0.00 },
-                    new GradientStop { Color = ColorHelper.FromArgb(255, 255, 186, 0), Offset = 0.20 },
-                    new GradientStop { Color = ColorHelper.FromArgb(255, 0, 180, 110), Offset = 0.40 },
-                    new GradientStop { Color = ColorHelper.FromArgb(255, 0, 168, 255), Offset = 0.62 },
-                    new GradientStop { Color = ColorHelper.FromArgb(255, 146, 68, 255), Offset = 0.82 },
-                    new GradientStop { Color = ColorHelper.FromArgb(255, 255, 70, 210), Offset = 1.00 }
-                }
-            };
+            return BrushCache.WorldsEnd;
         }
 
-        return new SolidColorBrush(key switch
+        return key switch
         {
-            "BASIC" => ColorHelper.FromArgb(255, 0, 169, 133),
-            "ADVANCED" => ColorHelper.FromArgb(255, 249, 119, 0),
-            "EXPERT" => ColorHelper.FromArgb(255, 224, 41, 41),
-            "MASTER" => ColorHelper.FromArgb(255, 183, 0, 255),
-            "ULTIMA" or "ULTRA" => Colors.Black,
-            _ => ColorHelper.FromArgb(255, 72, 84, 102)
-        });
+            "BASIC" => BrushCache.Basic,
+            "ADVANCED" => BrushCache.Advanced,
+            "EXPERT" => BrushCache.Expert,
+            "MASTER" => BrushCache.Master,
+            "ULTIMA" or "ULTRA" => BrushCache.Ultima,
+            _ => BrushCache.Default
+        };
     }
 
     public static Brush GetForeground(string difficulty)
     {
-        var key = Normalize(difficulty);
-        return new SolidColorBrush(key is "ADVANCED" ? Colors.Black : Colors.White);
+        return Normalize(difficulty) is "ADVANCED" ? BrushCache.BlackForeground : BrushCache.WhiteForeground;
     }
 
     public static int Rank(string difficulty)
@@ -141,5 +126,44 @@ public static class DifficultyPalette
     private static string Normalize(string difficulty)
     {
         return difficulty.Trim().ToUpperInvariant().Replace("WORLD'SEND", "WORLD'S END");
+    }
+
+    // 难度配色是纯函数（只取决于难度字符串），整个程序共用一组不可变画刷即可，
+    // 不必每次数据绑定都 new 一把：一张歌曲卡要读 10+ 次画刷，上千张卡 × 每次筛选会产生上万个临时画刷。
+    // 放进嵌套类延迟初始化，保证画刷在首次绑定（UI 线程）时才创建——Rank 在后台扫描线程被调用，不会触碰这里。
+    private static class BrushCache
+    {
+        internal static readonly Brush Basic = Solid(0, 169, 133);
+        internal static readonly Brush Advanced = Solid(249, 119, 0);
+        internal static readonly Brush Expert = Solid(224, 41, 41);
+        internal static readonly Brush Master = Solid(183, 0, 255);
+        internal static readonly Brush Ultima = new SolidColorBrush(Colors.Black);
+        internal static readonly Brush Default = Solid(72, 84, 102);
+        internal static readonly Brush WhiteForeground = new SolidColorBrush(Colors.White);
+        internal static readonly Brush BlackForeground = new SolidColorBrush(Colors.Black);
+        internal static readonly Brush WorldsEnd = CreateWorldsEndBrush();
+
+        private static SolidColorBrush Solid(byte r, byte g, byte b)
+        {
+            return new SolidColorBrush(ColorHelper.FromArgb(255, r, g, b));
+        }
+
+        private static Brush CreateWorldsEndBrush()
+        {
+            return new LinearGradientBrush
+            {
+                StartPoint = new Point(0, 0.5),
+                EndPoint = new Point(1, 0.5),
+                GradientStops =
+                {
+                    new GradientStop { Color = ColorHelper.FromArgb(255, 255, 44, 76), Offset = 0.00 },
+                    new GradientStop { Color = ColorHelper.FromArgb(255, 255, 186, 0), Offset = 0.20 },
+                    new GradientStop { Color = ColorHelper.FromArgb(255, 0, 180, 110), Offset = 0.40 },
+                    new GradientStop { Color = ColorHelper.FromArgb(255, 0, 168, 255), Offset = 0.62 },
+                    new GradientStop { Color = ColorHelper.FromArgb(255, 146, 68, 255), Offset = 0.82 },
+                    new GradientStop { Color = ColorHelper.FromArgb(255, 255, 70, 210), Offset = 1.00 }
+                }
+            };
+        }
     }
 }

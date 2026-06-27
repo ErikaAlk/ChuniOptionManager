@@ -30,12 +30,41 @@ public static class DdsPreviewCache
                 return previewPath;
             }
 
-            DecodeToPng(path, previewPath);
+            // 先解码到唯一的临时文件，再原子地 Move 到最终路径。
+            // 否则进程在 bitmap.Save 中途被杀/磁盘满/并发写，都会在缓存里留下一个截断的 PNG，
+            // 而缓存键（路径|大小|mtime）不变，这个坏文件会被后续每次运行永久命中。
+            var tempPath = previewPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            DecodeToPng(path, tempPath);
+            try
+            {
+                File.Move(tempPath, previewPath);
+            }
+            catch (IOException)
+            {
+                // 另一个线程/进程已经抢先生成了同一个预览：保留它的，删掉我们的临时文件。
+                TryDelete(tempPath);
+            }
+
             return previewPath;
         }
         catch
         {
             return path;
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+            // 临时文件清理失败可忽略。
         }
     }
 

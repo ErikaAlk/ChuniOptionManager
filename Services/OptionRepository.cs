@@ -67,12 +67,7 @@ public static class OptionRepository
             }
         }
 
-        var backupPath = music.XmlPath + ".bak";
-        if (!File.Exists(backupPath))
-        {
-            File.Copy(music.XmlPath, backupPath);
-        }
-
+        EnsureBackup(music.XmlPath);
         document.Save(music.XmlPath, SaveOptions.DisableFormatting);
     }
 
@@ -102,12 +97,7 @@ public static class OptionRepository
         SetText(charaRoot, "illustratorName", "str", character.IllustratorName.Trim());
         SetText(charaRoot, "explainText", character.ExplainText.Trim());
 
-        var backupPath = character.XmlPath + ".bak";
-        if (!File.Exists(backupPath))
-        {
-            File.Copy(character.XmlPath, backupPath);
-        }
-
+        EnsureBackup(character.XmlPath);
         SaveXml(document, character.XmlPath);
     }
 
@@ -124,6 +114,7 @@ public static class OptionRepository
 
     public static string DeleteCharacter(string optionRoot, CharacterItem character)
     {
+        var root = Path.GetFullPath(optionRoot);
         var directories = new List<string>();
         var charaDirectory = Path.GetDirectoryName(character.XmlPath);
         if (!string.IsNullOrWhiteSpace(charaDirectory))
@@ -132,7 +123,8 @@ public static class OptionRepository
         }
 
         var ddsDirectory = Path.GetDirectoryName(character.DdsXmlPath);
-        if (!string.IsNullOrWhiteSpace(ddsDirectory))
+        // 只有当 DDSImage 目录和角色在同一个包里时才一并删除：跨包"借用"的贴图目录可能被别的角色共用，删了会误伤。
+        if (!string.IsNullOrWhiteSpace(ddsDirectory) && IsSamePackage(root, character.XmlPath, character.DdsXmlPath))
         {
             directories.Add(ddsDirectory);
         }
@@ -140,7 +132,7 @@ public static class OptionRepository
         return MoveToDeleted(optionRoot, "character", character.Id, character.Name, directories);
     }
 
-    public static void AddCharacter(string optionRoot, AddCharacterRequest request)
+    public static int AddCharacter(string optionRoot, AddCharacterRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Name))
         {
@@ -160,56 +152,82 @@ public static class OptionRepository
 
         var templateCharaPath = ResolveTemplateCharaPath(charaRoot);
         var templateDdsPath = ResolveTemplateDdsPath(ddsRoot);
-        var newId = NextCustomCharacterId(charaRoot);
+        // 指定了 ID 就校验后用它（撞号/目录占用会抛错）；否则自动分配下一个空闲 id。
+        var newId = request.Id > 0
+            ? ValidateExplicitCharacterId(root, charaRoot, request.Id)
+            : NextCustomCharacterId(root, charaRoot);
         var sortName = string.IsNullOrWhiteSpace(request.SortName) ? request.Name.Trim() : request.SortName.Trim();
         var charaImageKey = $"chara{newId}_00";
         var addImageKey = $"chara{newId}_01";
 
         var newCharaDirectory = Path.Combine(charaRoot, $"chara{newId}");
         var newDdsDirectory = Path.Combine(ddsRoot, $"ddsImage{newId}");
+        var charaDirectoryCreated = !Directory.Exists(newCharaDirectory);
+        var ddsDirectoryCreated = !Directory.Exists(newDdsDirectory);
         Directory.CreateDirectory(newCharaDirectory);
         Directory.CreateDirectory(newDdsDirectory);
 
-        var charaDocument = XDocument.Load(templateCharaPath);
-        var chara = charaDocument.Root ?? throw new InvalidOperationException("模板 Chara.xml 无根节点。");
-        SetText(chara, "dataName", $"chara{newId}");
-        SetText(chara, "name", "id", newId.ToString());
-        SetText(chara, "name", "str", request.Name.Trim());
-        SetText(chara, "sortName", sortName);
-        SetText(chara, "defaultImages", "id", newId.ToString());
-        SetText(chara, "defaultImages", "str", charaImageKey);
-        SetText(chara, "addImages1", "charaName", "id", (newId + 100000).ToString());
-        SetText(chara, "addImages1", "charaName", "str", request.Name.Trim());
-        SetText(chara, "addImages1", "image", "id", (newId + 100000).ToString());
-        SetText(chara, "addImages1", "image", "str", addImageKey);
-        SetText(chara, "works", "id", request.WorksId.ToString());
-        SetText(chara, "works", "str", request.WorksName.Trim());
-        SetText(chara, "priority", DefaultCustomCharacterPriority.ToString());
-        if (!string.IsNullOrWhiteSpace(request.IllustratorName))
+        try
         {
-            SetText(chara, "illustratorName", "str", request.IllustratorName.Trim());
+            var charaDocument = XDocument.Load(templateCharaPath);
+            var chara = charaDocument.Root ?? throw new InvalidOperationException("模板 Chara.xml 无根节点。");
+            SetText(chara, "dataName", $"chara{newId}");
+            SetText(chara, "name", "id", newId.ToString());
+            SetText(chara, "name", "str", request.Name.Trim());
+            SetText(chara, "sortName", sortName);
+            SetText(chara, "defaultImages", "id", newId.ToString());
+            SetText(chara, "defaultImages", "str", charaImageKey);
+            SetText(chara, "addImages1", "charaName", "id", (newId + 100000).ToString());
+            SetText(chara, "addImages1", "charaName", "str", request.Name.Trim());
+            SetText(chara, "addImages1", "image", "id", (newId + 100000).ToString());
+            SetText(chara, "addImages1", "image", "str", addImageKey);
+            SetText(chara, "works", "id", request.WorksId.ToString());
+            SetText(chara, "works", "str", request.WorksName.Trim());
+            SetText(chara, "priority", DefaultCustomCharacterPriority.ToString());
+            if (!string.IsNullOrWhiteSpace(request.IllustratorName))
+            {
+                SetText(chara, "illustratorName", "str", request.IllustratorName.Trim());
+            }
+            SaveXml(charaDocument, Path.Combine(newCharaDirectory, "Chara.xml"));
+
+            var ddsDocument = XDocument.Load(templateDdsPath);
+            var dds = ddsDocument.Root ?? throw new InvalidOperationException("模板 DDSImage.xml 无根节点。");
+            SetText(dds, "dataName", $"ddsImage{newId}");
+            SetText(dds, "name", "id", newId.ToString());
+            SetText(dds, "name", "str", charaImageKey);
+            SetText(dds, "ddsFile0", "path", "big.dds");
+            SetText(dds, "ddsFile1", "path", "small.dds");
+            SetText(dds, "ddsFile2", "path", "thumb.dds");
+            SaveXml(ddsDocument, Path.Combine(newDdsDirectory, "DDSImage.xml"));
+
+            if (!string.IsNullOrWhiteSpace(request.SourceImagePath))
+            {
+                DdsImageGenerator.GenerateCharacterDds(request.SourceImagePath, newDdsDirectory, request.Crops);
+            }
+
+            if (request.WorksId > 0 && EnsureWorksPriority(worksRoot, request.WorksId))
+            {
+                AddWorksToSortFirst(Path.Combine(worksRoot, "WorksSort.xml"), request.WorksId);
+            }
         }
-        SaveXml(charaDocument, Path.Combine(newCharaDirectory, "Chara.xml"));
-
-        var ddsDocument = XDocument.Load(templateDdsPath);
-        var dds = ddsDocument.Root ?? throw new InvalidOperationException("模板 DDSImage.xml 无根节点。");
-        SetText(dds, "dataName", $"ddsImage{newId}");
-        SetText(dds, "name", "id", newId.ToString());
-        SetText(dds, "name", "str", charaImageKey);
-        SetText(dds, "ddsFile0", "path", "big.dds");
-        SetText(dds, "ddsFile1", "path", "small.dds");
-        SetText(dds, "ddsFile2", "path", "thumb.dds");
-        SaveXml(ddsDocument, Path.Combine(newDdsDirectory, "DDSImage.xml"));
-
-        if (!string.IsNullOrWhiteSpace(request.SourceImagePath))
+        catch
         {
-            DdsImageGenerator.GenerateCharacterDds(request.SourceImagePath, newDdsDirectory, request.Crops);
+            // 半途失败（如源图损坏、DDS 生成抛错）就回滚我们刚建的目录，
+            // 避免在 option 树里留下没有贴图的残缺角色，并把这个 id 永久占用。
+            if (charaDirectoryCreated)
+            {
+                TryDeleteDirectory(newCharaDirectory);
+            }
+
+            if (ddsDirectoryCreated)
+            {
+                TryDeleteDirectory(newDdsDirectory);
+            }
+
+            throw;
         }
 
-        if (request.WorksId > 0 && EnsureWorksPriority(worksRoot, request.WorksId))
-        {
-            AddWorksToSortFirst(Path.Combine(worksRoot, "WorksSort.xml"), request.WorksId);
-        }
+        return newId;
     }
 
     public static List<WorksItem> ListWorks(string optionRoot)
@@ -350,12 +368,7 @@ public static class OptionRepository
         SetText(worksRoot, "sortName", string.IsNullOrWhiteSpace(works.SortName) ? works.Name.Trim() : works.SortName.Trim());
         SetText(worksRoot, "priority", works.Priority.ToString());
 
-        var backupPath = works.XmlPath + ".bak";
-        if (!File.Exists(backupPath))
-        {
-            File.Copy(works.XmlPath, backupPath);
-        }
-
+        EnsureBackup(works.XmlPath);
         SaveXml(document, works.XmlPath);
     }
 
@@ -377,18 +390,23 @@ public static class OptionRepository
         var directories = new List<string> { directory };
 
         // 连带删除属于该作品的角色（含其 Chara 目录与匹配到的 DDSImage 目录）。
-        foreach (var character in Scan(root).Characters.Where(item => item.WorksId == works.Id))
+        // works.Id 必须有效（>0）：id=0 代表"无作品/解析失败"，若放任 cascade 会把所有 worksId 缺失的角色一起误删。
+        if (works.Id > 0)
         {
-            var charaDirectory = Path.GetDirectoryName(character.XmlPath);
-            if (!string.IsNullOrWhiteSpace(charaDirectory))
+            foreach (var character in Scan(root).Characters.Where(item => item.WorksId == works.Id))
             {
-                directories.Add(charaDirectory);
-            }
+                var charaDirectory = Path.GetDirectoryName(character.XmlPath);
+                if (!string.IsNullOrWhiteSpace(charaDirectory))
+                {
+                    directories.Add(charaDirectory);
+                }
 
-            var ddsDirectory = Path.GetDirectoryName(character.DdsXmlPath);
-            if (!string.IsNullOrWhiteSpace(ddsDirectory))
-            {
-                directories.Add(ddsDirectory);
+                var ddsDirectory = Path.GetDirectoryName(character.DdsXmlPath);
+                // 同上：跨包借用的 DDSImage 目录不连带删除，避免误伤其它角色。
+                if (!string.IsNullOrWhiteSpace(ddsDirectory) && IsSamePackage(root, character.XmlPath, character.DdsXmlPath))
+                {
+                    directories.Add(ddsDirectory);
+                }
             }
         }
 
@@ -583,7 +601,8 @@ public static class OptionRepository
             });
         }
 
-        foreach (var group in songs.GroupBy(song => song.Id).Where(group => group.Count() > 1))
+        // 只对有效 ID（>0）做重复项比对：id=0 代表 name/id 缺失或非数字，把它们归成一组会产生大量虚假"重复"告警。
+        foreach (var group in songs.GroupBy(song => song.Id).Where(group => group.Key > 0 && group.Count() > 1))
         {
             var difficultySets = group
                 .Select(song => string.Join(",", song.ExistingEnabledCharts.Select(chart => chart.Difficulty).OrderBy(item => item)))
@@ -718,7 +737,16 @@ public static class OptionRepository
 
         var deletedRoot = Path.Combine(root, DeletedItemsFolder);
         Directory.CreateDirectory(deletedRoot);
-        var archiveRoot = Path.Combine(deletedRoot, $"{DateTime.Now:yyyyMMdd_HHmmss}_{type}_{id}_{SafeFileName(name)}");
+
+        // 归档目录名只精确到秒：同一秒内删除两个同类型/同 id/同名的条目会撞名，
+        // 进而让后续 Directory.Move 合并或抛异常。撞名就追加序号，保证每次删除拿到独立目录。
+        var archiveBaseName = $"{DateTime.Now:yyyyMMdd_HHmmss}_{type}_{id}_{SafeFileName(name)}";
+        var archiveRoot = Path.Combine(deletedRoot, archiveBaseName);
+        for (var suffix = 2; Directory.Exists(archiveRoot); suffix++)
+        {
+            archiveRoot = Path.Combine(deletedRoot, $"{archiveBaseName}_{suffix}");
+        }
+
         Directory.CreateDirectory(archiveRoot);
 
         foreach (var source in sources)
@@ -765,6 +793,36 @@ public static class OptionRepository
     private static string BoolText(bool value)
     {
         return value ? "true" : "false";
+    }
+
+    private static void EnsureBackup(string path)
+    {
+        // 约定：任何文件第一次保存时复制一份 <file>.bak，且只复制一次。
+        var backupPath = path + ".bak";
+        if (!File.Exists(backupPath))
+        {
+            File.Copy(path, backupPath);
+        }
+    }
+
+    private static bool IsSamePackage(string root, string pathA, string pathB)
+    {
+        return PackageName(root, pathA).Equals(PackageName(root, pathB), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, recursive: true);
+            }
+        }
+        catch
+        {
+            // 回滚清理是尽力而为，失败不应掩盖原始异常。
+        }
     }
 
     private static string NormalizeDifficulty(string difficulty)
@@ -814,24 +872,34 @@ public static class OptionRepository
             .FirstOrDefault() ?? throw new FileNotFoundException("AZUR 下没有可用的 DDSImage.xml 模板。");
     }
 
-    private static int NextCustomCharacterId(string charaRoot)
+    private static HashSet<int> CollectCharacterIds(string root)
     {
-        var maxId = Directory.EnumerateFiles(charaRoot, "Chara.xml", SearchOption.AllDirectories)
-            .Select(path =>
+        // 收集整个 option 根（含其它包与 _deleted）里所有角色的 name/id，
+        // 既用于自动分配新 id，也用于显式 id 的撞号校验。
+        var ids = new HashSet<int>();
+        foreach (var path in Directory.EnumerateFiles(root, "Chara.xml", SearchOption.AllDirectories))
+        {
+            try
             {
-                try
+                var id = Int(XDocument.Load(path).Root?.Element("name"), "id");
+                if (id > 0)
                 {
-                    var document = XDocument.Load(path);
-                    return Int(document.Root?.Element("name"), "id");
+                    ids.Add(id);
                 }
-                catch
-                {
-                    return 0;
-                }
-            })
-            .DefaultIfEmpty(114513)
-            .Max();
+            }
+            catch
+            {
+                // 坏 XML 跳过，不影响 id 分配。
+            }
+        }
 
+        return ids;
+    }
+
+    private static int NextCustomCharacterId(string root, string charaRoot)
+    {
+        // 只看 AZUR/chara 会和别的包里的自定义角色撞 id，也会重用刚软删除、之后可能恢复的 id，故扫描整个根。
+        var maxId = CollectCharacterIds(root).DefaultIfEmpty(114513).Max();
         var nextId = Math.Max(maxId + 1, 114514);
         while (Directory.Exists(Path.Combine(charaRoot, $"chara{nextId}")))
         {
@@ -839,6 +907,26 @@ public static class OptionRepository
         }
 
         return nextId;
+    }
+
+    private static int ValidateExplicitCharacterId(string root, string charaRoot, int id)
+    {
+        if (id <= 0)
+        {
+            throw new InvalidOperationException("角色 ID 必须是正整数。");
+        }
+
+        if (Directory.Exists(Path.Combine(charaRoot, $"chara{id}")))
+        {
+            throw new InvalidOperationException($"AZUR 下已存在 chara{id} 目录，请换一个 ID。");
+        }
+
+        if (CollectCharacterIds(root).Contains(id))
+        {
+            throw new InvalidOperationException($"角色 ID {id} 已被占用（option 内或 _deleted 中已存在），请换一个。");
+        }
+
+        return id;
     }
 
     private static string ResolveTemplateWorksPath(string root, string worksRoot)
@@ -1015,6 +1103,8 @@ public static class OptionRepository
 
 public sealed class AddCharacterRequest
 {
+    // 显式角色 ID（最终 ID = 基 ID × 10 + 皮肤 ID）；<=0 表示交给程序自动分配下一个空闲 id（≥114514）。
+    public int Id { get; set; }
     public string Name { get; set; } = "";
     public string SortName { get; set; } = "";
     public string IllustratorName { get; set; } = "";
