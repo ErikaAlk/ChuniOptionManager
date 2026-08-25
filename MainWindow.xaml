@@ -36,9 +36,8 @@
 
             <Grid Padding="26,20,26,24" RowDefinitions="Auto,Auto,*" RowSpacing="16">
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
-                    <StackPanel Spacing="4">
+                    <StackPanel Spacing="4" VerticalAlignment="Center">
                         <TextBlock Text="CHUNITHM Option Manager" FontSize="28" FontWeight="SemiBold" />
-                        <TextBlock Text="可视化查看和管理 option 文件夹里的歌曲、谱面和角色" Foreground="{ThemeResource SoftTextBrush}" />
                     </StackPanel>
                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                         <Button Click="PickFolder_Click">
