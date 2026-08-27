@@ -155,7 +155,7 @@ ui/                界面（PySide6）
   works_dialogs.py   作品库
   first_run.py       选 option 文件夹
 packaging/         app.spec / installer.iss / build.py / app.ico
-tests/             98 条，pytest
+tests/             102 条，pytest
 ```
 
 ## 许可

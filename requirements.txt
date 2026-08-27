@@ -1,8 +1,12 @@
-# 运行时依赖 / Runtime
+# Keep this file ASCII-only. pip decodes requirements files with the *locale*
+# encoding when there is no BOM, so UTF-8 comments blow up on a zh-CN Windows
+# with "'gbk' codec can't decode byte" before a single package is installed.
+
+# Runtime
 PySide6>=6.6.0
 Pillow>=10.0.0
 numpy>=1.24.0
 
-# 打包和测试 / Packaging and tests
+# Packaging and tests
 pyinstaller>=6.0.0
 pytest>=8.0.0
