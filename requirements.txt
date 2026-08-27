@@ -1,0 +1,8 @@
+# 运行时依赖 / Runtime
+PySide6>=6.6.0
+Pillow>=10.0.0
+numpy>=1.24.0
+
+# 打包和测试 / Packaging and tests
+pyinstaller>=6.0.0
+pytest>=8.0.0
