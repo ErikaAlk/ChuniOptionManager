@@ -168,7 +168,7 @@ class MainWindow(QMainWindow):
         self._build()
         self._ready = True
         imagecache.instance().changed.connect(self._repaint_lists)
-        theme.apply_dark_titlebar(self)
+        theme.apply_mica(self)
         self.reload()
 
     # -- 装配 -------------------------------------------------------------

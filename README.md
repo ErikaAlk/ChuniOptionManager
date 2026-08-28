@@ -60,6 +60,15 @@
   角色图索引缺失。
 - WORLD'S END 拆成独立条目视为正常，不计入。
 
+## 界面
+
+照 Apple HIG 做的深色界面，主题色紫罗兰 `#B44BFF`。
+
+Windows 11 上窗口背景是 **Mica**：DWM 拿桌面壁纸做一层模糊去饱和的底，跟着壁纸和
+亮/暗模式走。Windows 10、或者 DWM 不接受这个请求的机器，退回原来的深色纯底
+`#1C1C1E`，别的地方一模一样。弹出式对话框（新增角色、单图快速生成、作品库）
+保持不透明。
+
 ## 截图
 
 | 歌曲 | 角色 |
@@ -155,7 +164,7 @@ ui/                界面（PySide6）
   works_dialogs.py   作品库
   first_run.py       选 option 文件夹
 packaging/         app.spec / installer.iss / build.py / app.ico
-tests/             102 条，pytest
+tests/             107 条，pytest
 ```
 
 ## 许可

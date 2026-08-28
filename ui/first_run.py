@@ -94,7 +94,7 @@ class OptionRootDialog(QDialog):
             if detected:
                 self._path.setText(str(detected))
         self._validate()
-        theme.apply_dark_titlebar(self)
+        theme.apply_mica(self)
 
     def _browse(self) -> None:
         """开文件夹对话框 / Open the folder picker."""

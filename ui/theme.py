@@ -10,6 +10,10 @@
 一行，hover / pressed / 半透明态全从它推导——换主色只改一行，不会漏掉某个
 状态还留着上一版的颜色。
 
+窗口背景在 Windows 11 上是 **Mica**：DWM 拿桌面壁纸做一层模糊去饱和的底，
+窗口跟着壁纸和亮/暗模式走。挂不上就退回不透明的 :data:`BG_WINDOW`，见
+:func:`apply_mica`。
+
 ⚠️ **绝对不要写 ``QWidget { background: ... }``**。QSS 的类型选择器连子类一起
 命中，那一条会把每个 QLabel 都刷上底色，在卡片上显示成一条条横杠。背景只画在
 真正需要的容器上（窗口、分组框、卡片）。
@@ -174,6 +178,10 @@ def stylesheet() -> str:
     return """
     QMainWindow, QDialog {{ background: {bg_window}; }}
     #Surface {{ background: {bg_window}; }}
+    /* 挂上 Mica 的窗口自己不画底，那块留给 DWM。属性选择器比裸类型选择器
+       优先级高，压得住上面两条；没挂上的窗口一个字节都不受影响，仍是不透明的。 */
+    QMainWindow[mica="true"], QDialog[mica="true"] {{ background: transparent; }}
+    QMainWindow[mica="true"] #Surface, QDialog[mica="true"] #Surface {{ background: transparent; }}
 
     QLabel {{ color: {label}; font-family: {font}; font-size: {body}px; }}
     QLabel#Title {{ font-size: {title1}px; font-weight: 600; }}
@@ -518,3 +526,138 @@ def apply_dark_titlebar(widget: QWidget) -> None:
                 ctypes.byref(value), ctypes.sizeof(value))
     except Exception:
         pass
+
+
+#: Windows 11 的起始内部版本号。Mica 是 Win11 才有的东西，Win10 上这些属性号
+#: 不认，硬设只会得到一个不透明也不 Mica 的窗口，所以低于这个数一律不试。
+BUILD_WIN11 = 22000
+#: ``DWMWA_SYSTEMBACKDROP_TYPE`` 是 22H2（22621）起的正式属性号；21H2 只认没进
+#: 文档的 ``DWMWA_MICA_EFFECT``。两版写法不一样，按版本分。
+BUILD_BACKDROP_ATTRIBUTE = 22621
+
+#: DwmSetWindowAttribute 的属性号。
+DWMWA_MICA_EFFECT = 1029
+DWMWA_SYSTEMBACKDROP_TYPE = 38
+#: ``DWMSBT_MAINWINDOW``，也就是 Mica。3 是 Acrylic（给临时窗口的），4 是 Mica Alt。
+#: 主窗口用 Mica：它取的是**桌面壁纸**而不是身后那扇窗，长驻窗口才配得上。
+DWMSBT_MAINWINDOW = 2
+
+
+def windows_build() -> int:
+    """
+    Windows 的内部版本号 / The Windows build number, 0 elsewhere.
+
+    返回 / Returns:
+        int: 例如 22631；不是 Windows 就是 0。
+    """
+    if sys.platform != "win32":
+        return 0
+    try:
+        return int(sys.getwindowsversion().build)
+    except Exception:
+        return 0
+
+
+def supports_mica() -> bool:
+    """这台机器能不能上 Mica / Whether this machine can do Mica at all."""
+    return windows_build() >= BUILD_WIN11
+
+
+def _backdrop_attribute(build: int) -> tuple:
+    """
+    这个版本认哪个属性号 / Which attribute this build understands.
+
+    参数 / Parameters:
+        build (int): Windows 内部版本号。
+
+    返回 / Returns:
+        tuple: ``(属性号, 值)``。
+    """
+    if build >= BUILD_BACKDROP_ATTRIBUTE:
+        return DWMWA_SYSTEMBACKDROP_TYPE, DWMSBT_MAINWINDOW
+    return DWMWA_MICA_EFFECT, 1
+
+
+def _enable_backdrop(handle: int) -> None:
+    """
+    真正去调 DWM 的那几行 / The actual DWM calls.
+
+    ``DwmExtendFrameIntoClientArea`` 那一步不能省：只设属性号的话，材质只出现在
+    标题栏那一条，客户区还是老样子。``-1`` 是「整个客户区都算边框玻璃」的写法。
+
+    参数 / Parameters:
+        handle (int): 顶层窗口的 HWND。
+
+    异常 / Raises:
+        OSError: DWM 不认这个属性，或者句柄无效。
+    """
+    import ctypes
+
+    class _Margins(ctypes.Structure):
+        _fields_ = [("cxLeftWidth", ctypes.c_int), ("cxRightWidth", ctypes.c_int),
+                    ("cyTopHeight", ctypes.c_int), ("cyBottomHeight", ctypes.c_int)]
+
+    dwm = ctypes.windll.dwmapi
+    window = ctypes.c_void_p(handle)
+
+    attribute, value = _backdrop_attribute(windows_build())
+    holder = ctypes.c_int(value)
+    result = dwm.DwmSetWindowAttribute(window, ctypes.c_int(attribute),
+                                       ctypes.byref(holder), ctypes.sizeof(holder))
+    if result != 0:
+        raise OSError("DwmSetWindowAttribute({}) 返回 0x{:08X}".format(attribute, result & 0xFFFFFFFF))
+
+    margins = _Margins(-1, -1, -1, -1)
+    result = dwm.DwmExtendFrameIntoClientArea(window, ctypes.byref(margins))
+    if result != 0:
+        raise OSError("DwmExtendFrameIntoClientArea 返回 0x{:08X}".format(result & 0xFFFFFFFF))
+
+
+def repolish(widget: QWidget) -> None:
+    """
+    让样式表重新认一遍这个窗口 / Re-run the style over a widget and its children.
+
+    属性选择器（``[mica="true"]``）是在 polish 的时候算的，改完属性不重来一遍
+    就不生效。
+    """
+    for target in [widget] + widget.findChildren(QWidget):
+        target.style().unpolish(target)
+        target.style().polish(target)
+
+
+def apply_mica(widget: QWidget) -> bool:
+    """
+    背景换成 Mica / Put a Mica backdrop behind the window.
+
+    三件事缺一不可，少一件就只是个透明窗口：
+
+    1. 窗口自己不能画底——``WA_TranslucentBackground`` 加样式表里那两条
+       ``[mica="true"]``，否则 DWM 画的东西被盖在下面；
+    2. ``DwmExtendFrameIntoClientArea`` 把玻璃摊到整个客户区；
+    3. 属性号按版本分（见 :func:`_backdrop_attribute`）。
+
+    **半路失败要把透明属性收回去**：窗口透明而底下没有 Mica，看到的是一个黑
+    窟窿，比没有材质难看得多。
+
+    参数 / Parameters:
+        widget (QWidget): 顶层窗口。子控件没有自己的 HWND，设了不算数。
+
+    返回 / Returns:
+        bool: 材质是否真的挂上了。没挂上的窗口仍是不透明的深色底。
+    """
+    if not supports_mica():
+        apply_dark_titlebar(widget)
+        return False
+
+    # 透明属性要赶在 winId() 之前设：窗口建出来之后再改，Qt 得把它拆了重建
+    widget.setAttribute(Qt.WA_TranslucentBackground, True)
+    apply_dark_titlebar(widget)
+    try:
+        _enable_backdrop(int(widget.winId()))
+    except Exception:
+        widget.setAttribute(Qt.WA_TranslucentBackground, False)
+        return False
+
+    widget.setProperty("mica", True)
+    repolish(widget)
+    return True

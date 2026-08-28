@@ -22,7 +22,7 @@
 py -3.11 -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
 .venv\Scripts\python main.py                       # 跑
-.venv\Scripts\python -m pytest tests -q            # 98 条测试
+.venv\Scripts\python -m pytest tests -q            # 107 条测试
 .venv\Scripts\python packaging\build.py            # 出 exe + 安装包
 ```
 
@@ -50,7 +50,7 @@ ui/cards.py            自绘的 delegate（歌曲行 / 角色格 / 排查行）
 ui/editors.py          两个检查器面板
 ui/add_character.py → ui/crop_window.py, ui/works_dialogs.py
 ui/first_run.py        选 option 文件夹
-ui/theme.py            配色 / 字号 / 自绘控件；ui/imagecache.py 异步解贴图
+ui/theme.py            配色 / 字号 / 自绘控件 / 窗口材质；ui/imagecache.py 异步解贴图
   ↓ 都用
 core/repository.py     扫描、排查、保存、软删除、新增角色、作品库
   ↓ 用
@@ -140,6 +140,19 @@ core/paths.py          找 option 根目录、记住它
     那一条会把每个 QLabel 都刷上底色，在卡片上显示成一条条横杠。背景只画在真正需要
     的容器上。→ 测试 `test_the_stylesheet_has_no_blanket_widget_rule`
 
+16. **Mica 要三件事一起，而且失败必须回滚。** 窗口自己不画底
+    （`WA_TranslucentBackground` + 样式表里那两条 `[mica="true"]`）、
+    `DwmExtendFrameIntoClientArea(-1)` 把玻璃摊到整个客户区、属性号按版本分
+    （22H2 起 `DWMWA_SYSTEMBACKDROP_TYPE`，21H2 只认没进文档的 `DWMWA_MICA_EFFECT`）。
+    少一件就只是个透明窗口。半路失败要把透明属性收回去——透明而底下没有材质，看到的
+    是一个黑窟窿，而且只在调用失败的那几台上出现，这边永远复现不了。
+    → 测试 `test_a_failed_backdrop_leaves_the_window_opaque`、
+    `test_the_stylesheet_lets_mica_show_through`
+
+17. **只有主窗口和第一次那个选目录对话框上 Mica。** 新增角色 / 单图快速生成 / 作品库
+    是盖在主窗口上的临时窗口，而 Mica 取的是**桌面壁纸**、不是身后那扇窗，临时窗口用它
+    会让人对不上位置。它们仍然只走 `apply_dark_titlebar`。
+
 ## 会浪费半小时的坑
 
 - **`option` 根目录的内容随时在变。** 用户会合并 / 拆分包。别把「有 35 个包、730 首歌」
@@ -160,6 +173,16 @@ core/paths.py          找 option 根目录、记住它
   都是方框**，连拉丁字母都是——那是平台的问题，不是字体设错了。要出截图就别设
   `QT_QPA_PLATFORM`，用真平台跑（`docs/` 里那两张就是这么出的）。
   但**字族仍然必须显式设**：自绘的 delegate 不吃 QSS，一律走 `theme.font()`。
+
+- **机器上很可能同时开着装好的那份**，窗口标题和源码跑起来的一模一样，
+  `FindWindowW(None, "CHUNITHM Option Manager")` 一律先找到装好的那个——于是改完源码
+  截图核对，拍到的是没改过的旧版，看着就像「改了没生效」。按「启动前后新冒出来的那扇窗」
+  认，别按标题认。**venv 里的 `python.exe` 还会再起一个子进程**，窗口不属于 `Popen`
+  拿到的那个 pid，按 pid 认同样会扑空。
+
+- **Mica 得用真的截屏看，`window.grab()` 看不到**：那画的是 Qt 自己的内容，DWM 那层
+  根本不在里面。判断挂上没挂上最快的办法是取一个空白处的像素——纯 `#1C1C1E` 就是没
+  挂上，Mica 会带一点壁纸的色偏。
 
 - **游戏全屏跑着的时候抢不到前台**，`SetForegroundWindow` + 屏幕截图会拍到游戏画面。
   要给安装器之类的窗口截图就用 `PrintWindow(hwnd, hdc, 2)`，它抓的是窗口自己的内容，

@@ -15,7 +15,7 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QThreadPool  # noqa: E402
+from PySide6.QtCore import Qt, QThreadPool  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from core import repository  # noqa: E402
@@ -61,6 +61,89 @@ def test_the_stylesheet_has_no_blanket_widget_rule() -> None:
     # 只挡「选择器就是 QWidget」那一条；``QScrollArea > QWidget`` 这种带上下文的
     # 限定不在此列，它只命中滚动区自己的视口
     assert not re.search(r"(?m)^\s*QWidget\s*\{", theme.stylesheet())
+
+
+def test_the_stylesheet_lets_mica_show_through() -> None:
+    """
+    挂上 Mica 的窗口不许自己画底 / A mica window must not paint its own background.
+
+    DWM 的材质画在窗口下面。窗口自己再刷一层不透明底色，材质就永远看不见——
+    而这在源码里完全看不出来，样式表照样合法、窗口照样开。
+    """
+    sheet = theme.stylesheet()
+    assert 'QMainWindow[mica="true"], QDialog[mica="true"] { background: transparent; }' in sheet
+    # 中间那层 #Surface 铺满整个客户区，它不透明的话上面那条就白设了
+    assert 'QMainWindow[mica="true"] #Surface' in sheet
+
+
+def test_mica_is_not_tried_below_windows_11(qt_app, monkeypatch) -> None:
+    """
+    Win10 上根本不去试 / Never even attempt Mica below Windows 11.
+
+    那几个属性号在 Win10 上不认，硬设的结果是一个透明窗口罩在没有材质的桌面上。
+    """
+    from PySide6.QtWidgets import QWidget
+
+    tried = []
+    monkeypatch.setattr(theme, "windows_build", lambda: 19045)
+    monkeypatch.setattr(theme, "_enable_backdrop", lambda handle: tried.append(handle))
+    assert theme.supports_mica() is False
+
+    widget = QWidget()
+    assert theme.apply_mica(widget) is False
+    # 断言「根本没去调」而不只是「返回了 False」：调用失败也会返回 False，
+    # 那样这条测试就挡不住「把版本判断删掉」这种改法
+    assert tried == []
+    assert not widget.testAttribute(Qt.WA_TranslucentBackground)
+
+    monkeypatch.setattr(theme, "windows_build", lambda: 22000)
+    assert theme.supports_mica() is True
+
+
+def test_the_backdrop_attribute_follows_the_build() -> None:
+    """
+    属性号按版本挑 / The right attribute for each build.
+
+    22H2 起才有正式的 ``DWMWA_SYSTEMBACKDROP_TYPE``；21H2 只认没进文档的 1029。
+    挑错的表现是调用返回错误码，窗口就那么透明着。
+    """
+    assert theme._backdrop_attribute(22631) == (theme.DWMWA_SYSTEMBACKDROP_TYPE,
+                                                theme.DWMSBT_MAINWINDOW)
+    assert theme._backdrop_attribute(22000) == (theme.DWMWA_MICA_EFFECT, 1)
+
+
+def test_mica_marks_the_window_for_the_stylesheet(qt_app, monkeypatch) -> None:
+    """挂上了就打上标记 / A successful backdrop marks the window."""
+    from PySide6.QtWidgets import QWidget
+
+    monkeypatch.setattr(theme, "supports_mica", lambda: True)
+    monkeypatch.setattr(theme, "_enable_backdrop", lambda handle: None)
+
+    widget = QWidget()
+    assert theme.apply_mica(widget) is True
+    assert widget.property("mica") is True
+    assert widget.testAttribute(Qt.WA_TranslucentBackground)
+
+
+def test_a_failed_backdrop_leaves_the_window_opaque(qt_app, monkeypatch) -> None:
+    """
+    DWM 不给就把透明收回去 / Roll the translucency back when DWM says no.
+
+    透明属性留着而底下没有材质，用户看到的是一个黑窟窿——比没有 Mica 难看得多，
+    而且只在那几台调用失败的机器上出现，这边永远复现不了。
+    """
+    from PySide6.QtWidgets import QWidget
+
+    def refuse(handle):
+        raise OSError("DwmSetWindowAttribute 返回 0x80070057")
+
+    monkeypatch.setattr(theme, "supports_mica", lambda: True)
+    monkeypatch.setattr(theme, "_enable_backdrop", refuse)
+
+    widget = QWidget()
+    assert theme.apply_mica(widget) is False
+    assert not widget.testAttribute(Qt.WA_TranslucentBackground)
+    assert not widget.property("mica")
 
 
 def test_every_state_of_the_accent_colour_is_derived() -> None:
