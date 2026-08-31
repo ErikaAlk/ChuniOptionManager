@@ -468,3 +468,38 @@ def test_the_recycle_area_is_not_a_package(option_root: Path) -> None:
     catalog = repository.scan(option_root)
     repository.delete_music(option_root, _song(catalog, "Song Three"))
     assert "_deleted" not in repository.list_packages(option_root)
+
+
+def test_the_scan_can_report_determinate_progress(option_root) -> None:
+    """
+    扫描能报出「第几个 / 一共几个」/ The scan reports a determinate ratio.
+
+    规范 5.1：可计算完成比例时显示 Determinate Progress，不可计算时才用不确定的
+    转圈。总数要走完目录才知道，所以前几次回调的总数是 0——界面据此先转圈，
+    拿到总数之后再切成确定进度。
+    """
+    ticks = []
+    catalog = repository.scan(str(option_root), lambda done, total: ticks.append((done, total)))
+
+    assert ticks[0] == (0, 0)
+    determinate = [tick for tick in ticks if tick[1] > 0]
+    assert determinate, "走完目录之后一次确定进度都没报"
+
+    total = determinate[-1][1]
+    assert determinate[-1][0] == total
+    # 歌曲和角色两段都要报，少一段的表现是进度条走到一半忽然跳到底
+    assert [done for done, _ in determinate] == list(range(0, total + 1))
+    assert total >= len(catalog.songs) + len(catalog.characters)
+
+
+def test_a_broken_progress_callback_does_not_break_the_scan(option_root) -> None:
+    """
+    进度回调炸了不能带着扫描一起炸 / A bad progress callback must not kill the scan.
+
+    进度是锦上添花的东西，它出问题的代价不该是「整个目录打不开」。
+    """
+    def explode(_done, _total):
+        raise RuntimeError("界面那边出事了")
+
+    catalog = repository.scan(str(option_root), explode)
+    assert catalog.songs

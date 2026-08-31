@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 
 from core import dds
 from core.repository import CropSettings
-from ui import theme
+from ui import theme, tokens
 
 #: 三个格子：``(键, 标签, 文件名, 输出边长, 默认取景)``。
 #: 默认取景是实测出来的：半身要往上抬一点才不会切到下巴，大头要抬更多。
@@ -91,7 +91,7 @@ class CropPane(QWidget):
         area = QRectF(0, 0, self.width(), self.height())
 
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(theme.BG_CANVAS))
+        painter.setBrush(QColor(tokens.IMAGE_BACKDROP))
         painter.drawRect(area)
 
         if self._template is not None and not self._template.isNull():
@@ -103,20 +103,20 @@ class CropPane(QWidget):
             painter.drawPixmap(area, self._source, QRectF(left, top, size, size))
             painter.setOpacity(1.0)
         else:
-            painter.setPen(QPen(QColor(theme.LABEL_3)))
-            painter.setFont(theme.font(theme.TYPE_BODY))
+            painter.setPen(QPen(QColor(theme.palette().text_tertiary)))
+            painter.setFont(theme.font("body"))
             painter.drawText(area, Qt.AlignCenter, "还没有选图")
 
-        painter.setPen(QPen(QColor(theme.SEPARATOR)))
+        painter.setPen(QPen(QColor(theme.palette().separator_subtle)))
         painter.setBrush(Qt.NoBrush)
         painter.drawRect(area.adjusted(0.5, 0.5, -0.5, -0.5))
 
         badge = QRectF(self.width() - 62, 8, 54, 20)
         painter.setPen(Qt.NoPen)
         painter.setBrush(QColor(0, 0, 0, 150))
-        painter.drawRoundedRect(badge, 4, 4)
-        painter.setPen(QPen(QColor(theme.LABEL)))
-        painter.setFont(theme.font(theme.TYPE_FOOTNOTE))
+        painter.drawRoundedRect(badge, tokens.RADIUS_SMALL, tokens.RADIUS_SMALL)
+        painter.setPen(QPen(QColor(tokens.GAME_CARD["name_bar"])))
+        painter.setFont(theme.font("caption"))
         painter.drawText(badge, Qt.AlignCenter, "{:.2f}x".format(self.crop.zoom))
 
     def mousePressEvent(self, event) -> None:  # noqa: D102
@@ -195,52 +195,51 @@ class CropDialog(QDialog):
         self._panes: Dict[str, CropPane] = {}
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(theme.SPACE_WINDOW, theme.SPACE_WINDOW,
-                                  theme.SPACE_WINDOW, theme.SPACE_WINDOW)
-        layout.setSpacing(theme.SPACE_GROUP)
+        layout.setContentsMargins(tokens.PADDING_PAGE_X, tokens.PADDING_PAGE_Y,
+                                  tokens.PADDING_PAGE_X, tokens.PADDING_PAGE_Y)
+        layout.setSpacing(tokens.GAP_GROUP)
 
-        hint = theme.secondary_label(
+        layout.addWidget(theme.wrapped_label(
             "选一张图之后，在三个格子里分别拖拽移动、滚轮缩放。"
-            "底下垫着的是模板贴图，用来对位；上面那张的透明度可以调。")
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
+            "底下垫着的是模板贴图，用来对位；上面那张的透明度可以调。", "secondary"))
 
         opacity_row = QHBoxLayout()
-        opacity_row.setSpacing(theme.SPACE_ROW)
-        opacity_row.addWidget(theme.field_label("覆盖图透明度"))
+        opacity_row.setSpacing(tokens.GAP_CONTROL)
+        opacity_row.addWidget(theme.label("覆盖图透明度", "body"))
         self._opacity = QSlider(Qt.Horizontal)
         self._opacity.setRange(20, 100)
         self._opacity.setValue(67)
+        self._opacity.setAccessibleName("覆盖图透明度")
         self._opacity.valueChanged.connect(self._apply_opacity)
         opacity_row.addWidget(self._opacity, 1)
         layout.addLayout(opacity_row)
 
         panes_row = QHBoxLayout()
-        panes_row.setSpacing(theme.SPACE_ROW)
+        panes_row.setSpacing(tokens.GAP_GROUP)
         for key, label, file_name, size, default in PANES:
             self._crops.setdefault(key, CropSettings(default.zoom, default.offset_x, default.offset_y))
             column = QVBoxLayout()
-            column.setSpacing(6)
+            column.setSpacing(tokens.GAP_RELATED)
             pane = CropPane(self._crops[key])
             self._panes[key] = pane
             column.addWidget(pane, 0, Qt.AlignHCenter)
 
-            caption = QLabel(label)
-            caption.setObjectName("SectionTitle")
+            caption = theme.label(label, "sectionTitle")
             caption.setAlignment(Qt.AlignHCenter)
             column.addWidget(caption)
+            pane.setAccessibleName("{} 取景".format(label))
 
-            column.addWidget(theme.footnote_label("{} · {}x{}".format(file_name, size, size)),
+            column.addWidget(theme.label("{} · {}x{}".format(file_name, size, size), "caption"),
                              0, Qt.AlignHCenter)
             panes_row.addLayout(column)
         layout.addLayout(panes_row)
 
         buttons = QHBoxLayout()
-        buttons.setSpacing(theme.SPACE_ROW)
+        buttons.setSpacing(tokens.GAP_CONTROL)
         upload = QPushButton("选择图片…")
         upload.clicked.connect(self._pick_image)
         buttons.addWidget(upload)
-        self._file_label = theme.footnote_label("")
+        self._file_label = theme.label("", "caption")
         buttons.addWidget(self._file_label, 1)
 
         cancel = QPushButton("取消")
@@ -249,6 +248,7 @@ class CropDialog(QDialog):
 
         self._confirm = QPushButton("生成并回填")
         self._confirm.setObjectName("Primary")
+        self._confirm.setDefault(True)
         self._confirm.clicked.connect(self.accept)
         buttons.addWidget(self._confirm)
         layout.addLayout(buttons)
@@ -256,7 +256,7 @@ class CropDialog(QDialog):
         self._load_template(template_dir)
         self._load_source(source_path)
         self._apply_opacity(self._opacity.value())
-        theme.apply_dark_titlebar(self)
+        theme.apply_titlebar(self)
 
     def _load_template(self, template_dir: Optional[Path]) -> None:
         """把模板贴图垫到三个格子底下 / Put the reference texture under each pane."""

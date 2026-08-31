@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
     QHBoxLayout,
-    QLabel,
     QLineEdit,
     QPushButton,
     QVBoxLayout,
@@ -26,7 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from core import paths
-from ui import theme
+from ui import theme, tokens
 
 
 class OptionRootDialog(QDialog):
@@ -34,6 +33,10 @@ class OptionRootDialog(QDialog):
     选 option 根目录 / Ask for the option root.
 
     ``accept()`` 之后 :attr:`chosen` 就是修正过的绝对路径。
+
+    校验一直在跑（按钮的可用状态跟着它走），但**报错要等用户先动过**：
+    规范 4.3 不许在用户还没交互时就抢先甩一条红字。认出来了是好消息，
+    那个随时可以显示。
     """
 
     def __init__(self, current: str = "", parent: Optional[QWidget] = None) -> None:
@@ -44,47 +47,45 @@ class OptionRootDialog(QDialog):
         self.setMinimumWidth(620)
 
         self.chosen = ""
+        self._touched = False
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(theme.SPACE_WINDOW, theme.SPACE_WINDOW,
-                                  theme.SPACE_WINDOW, theme.SPACE_WINDOW)
-        layout.setSpacing(theme.SPACE_GROUP)
+        layout.setContentsMargins(tokens.PADDING_PAGE_X, tokens.PADDING_PAGE_Y,
+                                  tokens.PADDING_PAGE_X, tokens.PADDING_PAGE_Y)
+        layout.setSpacing(tokens.GAP_GROUP)
 
-        title = QLabel("option 文件夹在哪")
-        title.setObjectName("Title")
-        layout.addWidget(title)
+        layout.addWidget(theme.label("option 文件夹在哪", "pageTitle"))
 
-        intro = theme.secondary_label(
+        layout.addWidget(theme.wrapped_label(
             "就是 CHUNITHM 的 bin\\option，底下是 A001、A300、AXVX 这些包。"
-            "选游戏根目录或 bin 也行，会自动往下找。")
-        intro.setWordWrap(True)
-        layout.addWidget(intro)
+            "选游戏根目录或 bin 也行，会自动往下找。", "secondary"))
 
-        group = theme.Group()
         row = QHBoxLayout()
-        row.setSpacing(theme.SPACE_ROW)
+        row.setSpacing(tokens.GAP_CONTROL)
         self._path = QLineEdit(current)
         self._path.setPlaceholderText(r"例如 C:\CHUNITHM\bin\option")
+        self._path.setAccessibleName("option 文件夹路径")
         self._path.textChanged.connect(self._validate)
+        self._path.editingFinished.connect(self._touch)
         row.addWidget(self._path, 1)
         browse = QPushButton("浏览…")
         browse.clicked.connect(self._browse)
         row.addWidget(browse)
-        group.add_layout(row)
-        layout.addWidget(group)
+        layout.addLayout(row)
 
-        self._status = QLabel()
-        self._status.setWordWrap(True)
+        self._status = theme.wrapped_label("", "secondary")
         layout.addWidget(self._status)
         layout.addStretch(1)
 
         buttons = QHBoxLayout()
+        buttons.setSpacing(tokens.GAP_CONTROL)
         buttons.addStretch(1)
         cancel = QPushButton("退出")
         cancel.clicked.connect(self.reject)
         buttons.addWidget(cancel)
         self._confirm = QPushButton("就用这个")
         self._confirm.setObjectName("Primary")
+        self._confirm.setDefault(True)
         self._confirm.clicked.connect(self._accept)
         buttons.addWidget(self._confirm)
         layout.addLayout(buttons)
@@ -101,28 +102,44 @@ class OptionRootDialog(QDialog):
         start = self._path.text().strip() or ""
         picked = QFileDialog.getExistingDirectory(self, "选择 option 文件夹", start)
         if picked:
+            self._touched = True
             self._path.setText(picked)
+
+    def _touch(self) -> None:
+        """用户动过了，从现在起可以报错 / The user has interacted; errors may show."""
+        self._touched = True
+        self._validate()
 
     def _validate(self) -> None:
         """
-        当场判断这个目录行不行 / Say right away whether the folder will work.
+        判断这个目录行不行 / Say whether the folder will work.
 
-        写在按钮上方而不是等点了「确定」再报错：让人在点之前就知道结果。
+        认出来了当场就说，这是好消息；认不出来的那句要等用户先动过——
+        窗口一打开就甩一条红字，是在骂一个还没开始操作的人。
         """
         resolved = paths.normalise_option_root(self._path.text().strip())
+        colour = theme.palette()
         if resolved:
             self.chosen = str(resolved)
-            self._status.setText("认出来了：{}".format(resolved))
-            self._status.setStyleSheet("color: {};".format(theme.SYSTEM["green"]))
+            theme.set_wrapped_text(self._status, "认出来了：{}".format(resolved))
+            self._status.setStyleSheet("color: {};".format(colour.success.text))
             self._confirm.setEnabled(True)
-        else:
-            self.chosen = ""
-            self._status.setText("这里面找不到 option 包（A001 / A300 / AXVX）和 Music.xml。")
-            self._status.setStyleSheet("color: {};".format(theme.SYSTEM["orange"]))
-            self._confirm.setEnabled(False)
+            return
+
+        self.chosen = ""
+        self._confirm.setEnabled(False)
+        if not self._touched:
+            theme.set_wrapped_text(self._status, "")
+            self._status.setStyleSheet("")
+            return
+        theme.set_wrapped_text(
+            self._status, "这里面找不到 option 包（A001 / A300 / AXVX）和 Music.xml。")
+        self._status.setStyleSheet("color: {};".format(colour.warning.text))
 
     def _accept(self) -> None:
         """记下来并关窗 / Remember the choice and close."""
+        self._touched = True
+        self._validate()
         if not self.chosen:
             return
         paths.remember_option_root(self.chosen)

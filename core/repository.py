@@ -24,7 +24,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from core import difficulty, xmlio
 from core.models import (
@@ -301,29 +301,55 @@ def _parse_character(
     )
 
 
-def scan(option_root: Any) -> OptionCatalog:
+def scan(option_root: Any, progress: Optional[Callable[[int, int], None]] = None) -> OptionCatalog:
     """
     扫一遍整个 option 目录 / Scan the whole option tree.
 
     参数 / Parameters:
         option_root (Any): option 根目录。
+        progress (Optional[Callable[[int, int], None]]): 进度回调，收到
+            ``(已解析, 总数)``。目录还没走完时总数是 0，界面据此显示不确定进度。
+            **回调是纯 Python，不能碰界面**——这个函数跑在后台线程上。
 
     返回 / Returns:
         OptionCatalog: 歌曲、角色、排查项。坏掉的 XML 会被跳过，不会抛异常。
     """
+    def report(done: int, total: int) -> None:
+        """进度回调本身绝不能让扫描失败 / A bad callback must not kill the scan."""
+        if progress is None:
+            return
+        try:
+            progress(done, total)
+        except Exception:
+            pass
+
     root = Path(option_root).resolve()
+    report(0, 0)
     found = _walk(root, ("Music.xml", "Chara.xml", "DDSImage.xml"))
 
     dds_index = _build_dds_index(root, found["DDSImage.xml"])
 
-    songs = [item for item in (_parse_music(root, path) for path in found["Music.xml"]) if item]
+    # 走完目录才知道总数，所以进度分两段：先不确定，再按已解析的份数走
+    total = len(found["Music.xml"]) + len(found["Chara.xml"])
+    done = 0
+    report(done, total)
+
+    songs = []
+    for path in found["Music.xml"]:
+        item = _parse_music(root, path)
+        if item:
+            songs.append(item)
+        done += 1
+        report(done, total)
     songs.sort(key=lambda song: (song.sort_title.casefold(), song.song_id))
 
-    characters = [
-        item for item in
-        (_parse_character(root, path, dds_index) for path in found["Chara.xml"])
-        if item
-    ]
+    characters = []
+    for path in found["Chara.xml"]:
+        item = _parse_character(root, path, dds_index)
+        if item:
+            characters.append(item)
+        done += 1
+        report(done, total)
     characters.sort(key=lambda item: (item.sort_name.casefold(), item.character_id))
 
     return OptionCatalog(songs=songs, characters=characters, issues=build_issues(songs, characters))

@@ -7,7 +7,10 @@
 作品是重要的，这两个窗口就是为了让人当场能建、能改。
 
 **删除作品会连带删掉属于它的角色**，所以删除做成两次点击的就地确认，
-不再套一层确认对话框。
+第二次点击的按钮上直接写着后果。
+
+管理窗口是一个列表，不是一堆卡片：规范 2.5 把「需要快速纵向扫描的列表」
+判给直接布局，一屏十几个圆角框反而更难扫。
 """
 
 from __future__ import annotations
@@ -18,7 +21,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QHBoxLayout,
-    QLabel,
     QLineEdit,
     QPushButton,
     QScrollArea,
@@ -28,7 +30,7 @@ from PySide6.QtWidgets import (
 
 from core import repository
 from core.models import WorksItem
-from ui import theme
+from ui import theme, tokens
 
 
 class AddWorksDialog(QDialog):
@@ -45,51 +47,52 @@ class AddWorksDialog(QDialog):
         self.created: Optional[WorksItem] = None
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(theme.SPACE_WINDOW, theme.SPACE_WINDOW,
-                                  theme.SPACE_WINDOW, theme.SPACE_WINDOW)
-        layout.setSpacing(theme.SPACE_GROUP)
+        layout.setContentsMargins(tokens.PADDING_PAGE_X, tokens.PADDING_PAGE_Y,
+                                  tokens.PADDING_PAGE_X, tokens.PADDING_PAGE_Y)
+        layout.setSpacing(tokens.GAP_SECTION)
 
-        group = theme.Group()
+        section = theme.Section("作品")
         self._package = QComboBox()
         self._package.addItems(repository.list_packages(option_root))
-        group.add_layout(_field("写入包（文件夹）", self._package))
-        group.add_separator()
+        self._package.setAccessibleName("写入包")
+        section.add_layout(_field("写入包（文件夹）", self._package))
 
         self._works_id = QLineEdit()
         self._works_id.setPlaceholderText("正整数，不能和已有的重复")
-        group.add_layout(_field("作品 ID", self._works_id))
-        group.add_separator()
+        self._works_id.setAccessibleName("作品 ID")
+        section.add_layout(_field("作品 ID", self._works_id))
 
         self._name = QLineEdit()
         self._name.setPlaceholderText("游戏内显示的名字，如 アズールレーン")
-        group.add_layout(_field("作品名", self._name))
-        group.add_separator()
+        self._name.setAccessibleName("作品名")
+        section.add_layout(_field("作品名", self._name))
 
         self._sort_name = QLineEdit()
         self._sort_name.setPlaceholderText("留空就用作品名")
-        group.add_layout(_field("排序名", self._sort_name))
-        layout.addWidget(group)
+        self._sort_name.setAccessibleName("排序名")
+        section.add_layout(_field("排序名", self._sort_name))
+        layout.addWidget(section)
 
-        self._error = QLabel()
-        self._error.setWordWrap(True)
-        self._error.setStyleSheet("color: {};".format(theme.SYSTEM["orange"]))
+        self._error = theme.wrapped_label("", "secondary")
         self._error.hide()
         layout.addWidget(self._error)
 
         layout.addStretch(1)
 
         buttons = QHBoxLayout()
+        buttons.setSpacing(tokens.GAP_CONTROL)
         buttons.addStretch(1)
         cancel = QPushButton("取消")
         cancel.clicked.connect(self.reject)
         buttons.addWidget(cancel)
         create = QPushButton("创建")
         create.setObjectName("Primary")
+        create.setDefault(True)
         create.clicked.connect(self._create)
         buttons.addWidget(create)
         layout.addLayout(buttons)
 
-        theme.apply_dark_titlebar(self)
+        theme.apply_titlebar(self)
 
     def _create(self) -> None:
         """校验并写盘 / Validate, then write."""
@@ -114,7 +117,8 @@ class AddWorksDialog(QDialog):
 
     def _fail(self, message: str) -> None:
         """把错误摆在按钮上方 / Show the error where the eye already is."""
-        self._error.setText(message)
+        theme.set_wrapped_text(self._error, message)
+        self._error.setStyleSheet("color: {};".format(theme.palette().error.text))
         self._error.show()
 
 
@@ -137,21 +141,23 @@ class ManageWorksDialog(QDialog):
         self.changed = False
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(theme.SPACE_WINDOW, theme.SPACE_WINDOW,
-                                  theme.SPACE_WINDOW, theme.SPACE_WINDOW)
-        layout.setSpacing(theme.SPACE_ROW)
+        layout.setContentsMargins(tokens.PADDING_PAGE_X, tokens.PADDING_PAGE_Y,
+                                  tokens.PADDING_PAGE_X, tokens.PADDING_PAGE_Y)
+        layout.setSpacing(tokens.GAP_GROUP)
 
-        warning = QLabel("删除作品会连带删除属于它的角色，需要点两次确认。删掉的东西移进 _deleted，没有真删。")
-        warning.setWordWrap(True)
-        warning.setStyleSheet("color: {};".format(theme.SYSTEM["orange"]))
+        warning = theme.wrapped_label(
+            "删除作品会连带删除属于它的角色，需要点两次确认。"
+            "删掉的东西移进 _deleted，没有真删。", "secondary")
+        warning.setStyleSheet("color: {};".format(theme.palette().warning.text))
         layout.addWidget(warning)
 
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._rows_host = QWidget()
         self._rows = QVBoxLayout(self._rows_host)
-        self._rows.setContentsMargins(0, 0, 8, 0)
-        self._rows.setSpacing(theme.SPACE_ROW)
+        self._rows.setContentsMargins(tokens.FOCUS_RING_OFFSET + tokens.FOCUS_RING_WIDTH, 0,
+                                      tokens.GAP_CONTROL, 0)
+        self._rows.setSpacing(0)
         self._scroll.setWidget(self._rows_host)
         layout.addWidget(self._scroll, 1)
 
@@ -163,7 +169,7 @@ class ManageWorksDialog(QDialog):
         layout.addLayout(footer)
 
         self._reload()
-        theme.apply_dark_titlebar(self)
+        theme.apply_titlebar(self)
 
     def _reload(self) -> None:
         """重建列表 / Rebuild the rows from disk."""
@@ -179,29 +185,38 @@ class ManageWorksDialog(QDialog):
             works_list = []
 
         if not works_list:
-            self._rows.addWidget(theme.secondary_label("作品库是空的（option 内没有 CharaWorks.xml）。"))
-        for works in works_list:
+            self._rows.addWidget(theme.wrapped_label(
+                "作品库是空的。option 里没有 CharaWorks.xml，"
+                "新建一个作品之后这里就会有内容。", "secondary"))
+        for index, works in enumerate(works_list):
+            if index:
+                self._rows.addWidget(theme.separator())
             self._rows.addWidget(self._build_row(works))
         self._rows.addStretch(1)
 
     def _build_row(self, works: WorksItem) -> QWidget:
         """一个作品一行 / One editable row."""
-        group = theme.Group()
+        row = QWidget()
+        row.setMinimumHeight(tokens.ROW_WITH_CAPTION_MIN_HEIGHT)
+        column = QVBoxLayout(row)
+        column.setContentsMargins(0, tokens.GAP_CONTROL, 0, tokens.GAP_CONTROL)
+        column.setSpacing(tokens.GAP_CONTROL)
 
         top = QHBoxLayout()
-        top.setSpacing(theme.SPACE_ROW)
+        top.setSpacing(tokens.GAP_CONTROL)
         name = QLineEdit(works.name)
+        name.setAccessibleName("作品名")
         sort_name = QLineEdit(works.sort_name)
+        sort_name.setAccessibleName("排序名")
         top.addLayout(_field("名称", name), 1)
         top.addLayout(_field("排序名", sort_name), 1)
-        group.add_layout(top)
+        column.addLayout(top)
 
-        meta = theme.footnote_label("ID {} · {} · priority {}".format(
-            works.works_id, works.package, works.priority))
-        group.add(meta)
-
-        actions = QHBoxLayout()
-        actions.addStretch(1)
+        bottom = QHBoxLayout()
+        bottom.setSpacing(tokens.GAP_CONTROL)
+        meta = theme.wrapped_label("ID {} · {} · priority {}".format(
+            works.works_id, works.package, works.priority), "caption")
+        bottom.addWidget(meta, 1)
 
         save = QPushButton("保存")
 
@@ -210,13 +225,15 @@ class ManageWorksDialog(QDialog):
             works.sort_name = sort_name.text().strip()
             try:
                 repository.update_works(works)
-                meta.setText("ID {} · {} · priority {} · 已保存".format(
+                meta.setStyleSheet("")
+                theme.set_wrapped_text(meta, "ID {} · {} · priority {} · 已保存".format(
                     works.works_id, works.package, works.priority))
             except (OSError, ValueError) as error:
-                meta.setText(str(error))
+                meta.setStyleSheet("color: {};".format(theme.palette().error.text))
+                theme.set_wrapped_text(meta, str(error))
 
         save.clicked.connect(do_save)
-        actions.addWidget(save)
+        bottom.addWidget(save)
 
         delete = QPushButton("删除")
         delete.setObjectName("Destructive")
@@ -232,19 +249,22 @@ class ManageWorksDialog(QDialog):
                 self.changed = True
                 self._reload()
             except (OSError, ValueError) as error:
-                meta.setText(str(error))
+                meta.setStyleSheet("color: {};".format(theme.palette().error.text))
+                theme.set_wrapped_text(meta, str(error))
 
         delete.clicked.connect(do_delete)
-        actions.addWidget(delete)
-        group.add_layout(actions)
+        bottom.addWidget(delete)
+        column.addLayout(bottom)
 
-        return group
+        return row
 
 
 def _field(label: str, widget: QWidget) -> QVBoxLayout:
-    """一个带小标签的输入框 / A captioned input."""
+    """一个带标签的输入框 / A labelled input."""
     column = QVBoxLayout()
-    column.setSpacing(4)
-    column.addWidget(theme.field_label(label))
+    column.setSpacing(tokens.GAP_RELATED)
+    caption = theme.label(label, "body")
+    caption.setBuddy(widget)
+    column.addWidget(caption)
     column.addWidget(widget)
     return column

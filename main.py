@@ -92,8 +92,8 @@ def main(argv: Optional[list] = None) -> int:
     app.setApplicationDisplayName("CHUNITHM Option Manager")
     app.setApplicationVersion(__version__)
     app.setWindowIcon(theme.app_icon())
-    app.setFont(theme.font(theme.TYPE_BODY))
-    app.setStyleSheet(theme.stylesheet())
+    # 字体、样式表和「跟着系统换亮暗」都由 install 一次装好
+    theme.install(app, paths.stored_theme_preference())
 
     root = resolve_option_root(args.option_root)
     if not root:

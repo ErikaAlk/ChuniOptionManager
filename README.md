@@ -9,7 +9,7 @@
 ![platform](https://img.shields.io/badge/platform-Windows%2010%2B-0078D6?logo=windows&logoColor=white)
 ![python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
 ![framework](https://img.shields.io/badge/PySide6-Qt%206-41CD52?logo=qt&logoColor=white)
-![lang](https://img.shields.io/badge/UI-简体中文-B44BFF)
+![lang](https://img.shields.io/badge/UI-简体中文-7C5BAF)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
 </div>
@@ -62,16 +62,25 @@
 
 ## 界面
 
-照 Apple HIG 做的深色界面，主题色紫罗兰 `#B44BFF`。
+**跟着系统走深色和浅色两套**，主题色是薰衣草紫。两套不是互为反色：浅色下主按钮是
+深紫底白字（Windows 自己的强调按钮就是这个样子），深色下是浅紫底深字。所有颜色、
+字号、间距、圆角都从 `ui/tokens.py` 那一份语义 Token 里取，界面代码里一个色值都没有。
+
+正文和控件文字全部达到 WCAG AA，控件边界和焦点指示不低于 3:1，而且是在**每一种它
+可能落上去的背景**上分别量的，不是只对页面底量一次。系统的字号缩放、高对比度和
+「减少动态效果」都跟随。
 
 Windows 11 上窗口背景是 **Mica**：DWM 拿桌面壁纸做一层模糊去饱和的底，跟着壁纸和
-亮/暗模式走。Windows 10、或者 DWM 不接受这个请求的机器，退回原来的深色纯底
-`#1C1C1E`，别的地方一模一样。弹出式对话框（新增角色、单图快速生成、作品库）
-保持不透明。
+亮/暗模式走。Windows 10、关掉了透明效果、开着高对比度、或者 DWM 不接受这个请求的
+机器，退回同一套颜色的实色底，别的地方一模一样。弹出式对话框（新增角色、单图快速
+生成、作品库）保持不透明。
+
+主题默认跟随系统，也可以在 `%APPDATA%\ChuniOptionManager\config.json` 里把 `theme`
+写成 `light` 或 `dark` 钉住。
 
 ## 截图
 
-| 歌曲 | 角色 |
+| 深色 | 浅色 |
 | :---: | :---: |
 | ![songs](docs/screenshot-songs.png) | ![characters](docs/screenshot-characters.png) |
 
@@ -155,7 +164,8 @@ core/              文件与 XML 处理，不认识 Qt
   dds.py             PNG/JPG → DXT5 + mipmap（手写编码器）
   ddspreview.py      DDS → PNG 预览缓存
 ui/                界面（PySide6）
-  theme.py           配色 / 字号 / 自绘控件，照 Apple HIG
+  tokens.py          设计 Token 的唯一真源：颜色 / 字号 / 间距 / 圆角 / 阴影 / 动效
+  theme.py           把 Token 映射到 Qt：亮暗模式、样式表、自绘控件、Mica
   main_window.py     三页 + 右侧检查器
   cards.py           歌曲行、角色格、排查行的自绘
   editors.py         两个检查器面板
@@ -164,7 +174,7 @@ ui/                界面（PySide6）
   works_dialogs.py   作品库
   first_run.py       选 option 文件夹
 packaging/         app.spec / installer.iss / build.py / app.ico
-tests/             107 条，pytest
+tests/             129 条，pytest
 ```
 
 ## 许可
