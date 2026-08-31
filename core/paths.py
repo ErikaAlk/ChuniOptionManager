@@ -186,6 +186,34 @@ def remember_option_root(path: Any) -> None:
     save_config(data)
 
 
+#: 主题偏好的三种取值。``system`` 是默认——桌面应用跟着系统亮暗走才是 Windows 惯例。
+THEME_PREFERENCES = ("system", "light", "dark")
+
+
+def stored_theme_preference() -> str:
+    """
+    配置里记着的主题偏好 / The remembered theme preference.
+
+    返回 / Returns:
+        str: ``system`` / ``light`` / ``dark``。配置里是别的东西一律当 ``system``，
+        坏配置不该让界面起不来。
+    """
+    value = load_config().get("theme")
+    return value if value in THEME_PREFERENCES else "system"
+
+
+def remember_theme_preference(value: str) -> None:
+    """
+    把主题偏好记进配置 / Persist the theme preference.
+
+    参数 / Parameters:
+        value (str): ``system`` / ``light`` / ``dark``，别的值按 ``system`` 存。
+    """
+    data = load_config()
+    data["theme"] = value if value in THEME_PREFERENCES else "system"
+    save_config(data)
+
+
 def installer_seed_root() -> Optional[Path]:
     """
     安装程序在向导里选的那个目录 / What the installer's wizard page picked.

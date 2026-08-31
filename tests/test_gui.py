@@ -19,7 +19,7 @@ from PySide6.QtCore import Qt, QThreadPool  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from core import repository  # noqa: E402
-from ui import theme  # noqa: E402
+from ui import theme, tokens  # noqa: E402
 
 
 @pytest.fixture(scope="session")
@@ -96,6 +96,10 @@ def test_mica_is_not_tried_below_windows_11(qt_app, monkeypatch) -> None:
     assert tried == []
     assert not widget.testAttribute(Qt.WA_TranslucentBackground)
 
+    # 透明效果和高对比度现在也是 supports_mica 的条件，钉住它们，
+    # 否则这条测试会跟着跑测试那台机器的系统设置走
+    monkeypatch.setattr(theme, "transparency_enabled", lambda: True)
+    monkeypatch.setattr(theme, "high_contrast", lambda: False)
     monkeypatch.setattr(theme, "windows_build", lambda: 22000)
     assert theme.supports_mica() is True
 
@@ -146,15 +150,56 @@ def test_a_failed_backdrop_leaves_the_window_opaque(qt_app, monkeypatch) -> None
     assert not widget.property("mica")
 
 
-def test_every_state_of_the_accent_colour_is_derived() -> None:
+def test_the_stylesheet_follows_the_mode(qt_app) -> None:
     """
-    hover / pressed 都从主色推出来 / Every accent state derives from one constant.
+    换模式要真的换一套颜色 / Switching the mode swaps the whole palette.
 
-    各写各的十六进制值，换主题色时漏改一处就花了。
+    上一版只有深色一套，样式表里的颜色是模块常量。改成两套之后最容易犯的错是
+    「切了模式但样式表还是上一套」——那在源码里完全看不出来。
     """
-    assert theme.ACCENT_HOVER == theme.mix(theme.ACCENT, "#FFFFFF", 0.14)
-    assert theme.ACCENT_PRESSED == theme.mix(theme.ACCENT, "#000000", 0.14)
-    assert theme.ACCENT.upper() == "#B44BFF"
+    theme.set_preference("dark", qt_app)
+    dark_sheet = theme.stylesheet()
+    assert theme.mode() == "dark"
+    assert tokens.DARK.canvas in dark_sheet
+
+    theme.set_preference("light", qt_app)
+    light_sheet = theme.stylesheet()
+    assert theme.mode() == "light"
+    assert tokens.LIGHT.canvas in light_sheet
+    assert tokens.DARK.canvas not in light_sheet
+
+    theme.set_preference("dark", qt_app)
+
+
+def test_the_type_scale_has_no_stray_sizes(qt_app) -> None:
+    """
+    字号只能从字阶里取 / Font sizes come from the scale, nowhere else.
+
+    ``theme.font`` 只认字阶里的角色名。写错名字当场 KeyError，
+    而不是悄悄给一个默认字号。
+    """
+    for role, style in tokens.TYPE.items():
+        assert theme.font(role).pixelSize() == style.size, role
+        assert theme.line_height(role) == style.line_height, role
+    with pytest.raises(KeyError):
+        theme.font("subhead")
+
+
+def test_the_switch_leaves_room_for_its_focus_ring(qt_app) -> None:
+    """
+    自绘控件要留出焦点环的位置 / A self-drawn control reserves room for its ring.
+
+    焦点环画在控件外面 4px。控件不把这块地方算进自己的尺寸，环就会被父容器
+    裁掉——**而它照样"画了"**，看起来就是焦点指示时有时无。
+    """
+    switch = theme.Switch()
+    ring = tokens.FOCUS_RING_OFFSET + tokens.FOCUS_RING_WIDTH
+    # 量的是控件真实占的地方，不是 sizeHint——sizeHint 算得对而 setFixedSize
+    # 忘了加余量的话，环照样会被裁掉
+    assert switch.width() == theme.Switch.TRACK_WIDTH + 2 * ring
+    assert switch.height() == theme.Switch.TRACK_HEIGHT + 2 * ring
+    assert switch.sizeHint() == switch.size()
+    assert switch.focusPolicy() == Qt.StrongFocus
 
 
 def test_the_switch_reports_what_it_shows(qt_app) -> None:
@@ -334,3 +379,116 @@ def _find_switch(widget, index: int):
     switches = widget.findChildren(theme.Switch)
     assert len(switches) > index
     return switches[index]
+
+
+def test_a_busy_page_degrades_as_a_whole_unit(window, qt_app) -> None:
+    """
+    扫描时整组一起降级 / The whole semantic unit degrades together.
+
+    规范 06 要求「整个语义单元一起降级」，2.1 又禁止对整行容器统一设 Opacity。
+    上一版只把控件 disable 了，旁边的「歌曲 730 / 730 首」还是正常颜色，
+    看着像「这几个控件坏了」而不是「整页在忙」。
+    """
+    window._set_busy(True)
+    for widget in (window._search, window._difficulty, window._song_sort,
+                   window._song_count, window._character_count, window._issue_count,
+                   window._root_label, window._search_label, window._difficulty_label):
+        assert not widget.isEnabled()
+
+    window._set_busy(False)
+    assert window._search.isEnabled()
+    assert window._song_count.isEnabled()
+
+
+def test_an_empty_result_explains_itself_and_offers_a_way_out(window, qt_app) -> None:
+    """
+    筛没了要说清楚，并给一个下一步 / An empty result explains itself and offers a way out.
+
+    规范 06 的 Empty：解释现状，提供**一个**最相关的下一步。搜到零条时
+    最相关的那一步是清空筛选，不是让人自己想。
+    """
+    window._search.setText("这个名字不可能存在")
+    qt_app.processEvents()
+    assert window._song_model.rowCount() == 0
+    assert window._song_page.stack.currentWidget() is window._song_page.state
+    assert window._song_page.state._action.isVisible()
+
+    window._song_page.state._action.click()
+    qt_app.processEvents()
+    assert window._search.text() == ""
+    assert window._song_model.rowCount() == 4
+    assert window._song_page.stack.currentWidget() is window._song_view
+
+
+def test_every_row_says_something_to_a_screen_reader(window) -> None:
+    """
+    自绘的行也要有可读文本 / Custom-painted rows still speak.
+
+    delegate 自绘不产生任何可访问文本，模型再不给 ``DisplayRole``，
+    整个列表在读屏软件下就是空的——而界面看上去完全正常。
+    """
+    for model in (window._song_model, window._character_model, window._issue_model):
+        assert model.rowCount()
+        for row in range(model.rowCount()):
+            spoken = model.data(model.index(row, 0), Qt.AccessibleTextRole)
+            assert spoken and spoken.strip()
+
+
+def test_only_one_primary_action_is_on_screen(window, qt_app) -> None:
+    """
+    一屏只有一个 Primary / One primary action per task context.
+
+    规范 3.1 和 4.2 都写着，而且 4.2 特意补了一句「工具栏中的独立高频动作不
+    因此自动成为 Primary」——「新增角色」就是被这句话降下去的那个。
+    """
+    from PySide6.QtWidgets import QPushButton
+
+    window._nav.setCurrentRow(1)
+    window._on_character_clicked(window._character_model.index(0, 0))
+    qt_app.processEvents()
+
+    visible = [button for button in window.findChildren(QPushButton)
+               if button.objectName() == "Primary" and button.isVisible()]
+    assert len(visible) == 1
+    assert visible[0].text() == "保存角色设置"
+
+
+def test_an_error_toast_waits_for_the_user(window, qt_app) -> None:
+    """
+    错误提示不自动消失 / Errors stay until the user deals with them.
+
+    规范 5.1：错误提示保留必要上下文和可执行的恢复动作，**直到用户处理或关闭**。
+    成功的那条相反，2 秒就该走。
+    """
+    from ui.main_window import STATUS_TIMEOUT
+
+    assert STATUS_TIMEOUT["error"] == 0
+    assert STATUS_TIMEOUT["success"] == 2000
+
+    window._notify("扫描失败", "目录读不动。", "error")
+    qt_app.processEvents()
+    assert window._status.isVisible()
+    assert not window._status._timer.isActive()
+
+    window._notify("已保存", "写回去了。", "success")
+    qt_app.processEvents()
+    assert window._status._timer.isActive()
+
+
+def test_the_folder_dialog_does_not_scold_you_before_you_type(qt_app, tmp_path: Path) -> None:
+    """
+    还没动手就不该先报错 / No blame before the user has interacted.
+
+    规范 4.3：普通错误的首次校验在字段失焦或提交时发生，不得在用户尚未交互时
+    抢先显示责备式错误。上一版是窗口一打开、路径为空就先甩一条橙字。
+    """
+    from ui.first_run import OptionRootDialog
+
+    elsewhere = tmp_path / "nowhere"
+    elsewhere.mkdir()
+    dialog = OptionRootDialog(str(elsewhere))
+    assert dialog.chosen == ""
+    assert "找不到 option 包" not in dialog._status.text()
+
+    dialog._touch()
+    assert "找不到 option 包" in dialog._status.text()

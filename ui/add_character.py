@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 from core import repository
 from core.models import WorksItem
 from core.repository import AddCharacterRequest, CropSettings
-from ui import theme
+from ui import theme, tokens
 from ui.crop_window import PANES, CropDialog
 from ui.works_dialogs import AddWorksDialog, ManageWorksDialog
 
@@ -61,58 +61,54 @@ class AddCharacterDialog(QDialog):
         self._works: List[WorksItem] = []
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(theme.SPACE_WINDOW, theme.SPACE_WINDOW,
-                                 theme.SPACE_WINDOW, theme.SPACE_WINDOW)
-        outer.setSpacing(theme.SPACE_GROUP)
+        outer.setContentsMargins(tokens.PADDING_PAGE_X, tokens.PADDING_PAGE_Y,
+                                 tokens.PADDING_PAGE_X, tokens.PADDING_PAGE_Y)
+        outer.setSpacing(tokens.GAP_GROUP)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         host = QWidget()
         layout = QVBoxLayout(host)
-        layout.setContentsMargins(0, 0, 8, 0)
-        layout.setSpacing(theme.SPACE_GROUP)
+        # 左边留出焦点环的 4px，右边给滚动条让位
+        layout.setContentsMargins(tokens.FOCUS_RING_OFFSET + tokens.FOCUS_RING_WIDTH, 0,
+                                  tokens.GAP_CONTROL, 0)
+        layout.setSpacing(tokens.GAP_SECTION)
         scroll.setWidget(host)
         outer.addWidget(scroll, 1)
 
-        layout.addWidget(_section_title("ID 与名称"))
-        identity = theme.Group()
+        identity = theme.Section("ID 与名称")
 
         self._base_id = QLineEdit()
         self._base_id.setPlaceholderText("留空＝自动分配下一个空闲号（≥114514）")
         self._base_id.textChanged.connect(self._update_final_id)
         identity.add_layout(_row("基 ID", self._base_id))
-        identity.add_separator()
 
         self._skin_id = QLineEdit("0")
         self._skin_id.setPlaceholderText("0–9，0 即默认皮肤")
         self._skin_id.textChanged.connect(self._update_final_id)
         identity.add_layout(_row("皮肤 ID", self._skin_id))
-        identity.add_separator()
 
         self._final_id = QLineEdit()
         self._final_id.setReadOnly(True)
         self._final_id.setPlaceholderText("基 ID × 10 + 皮肤 ID")
         identity.add_layout(_row("最终 ID", self._final_id))
-        identity.add_separator()
 
         self._name = QLineEdit()
         self._name.setPlaceholderText("游戏内显示的角色名")
         identity.add_layout(_row("角色名", self._name))
-        identity.add_separator()
 
         self._illustrator = QLineEdit()
         self._illustrator.setPlaceholderText("可选，留空写 Invalid")
         identity.add_layout(_row("绘师", self._illustrator))
+        identity.add_block(_warning(
+            "角色名尽量用日语字库里有的字。超出字库的汉字在游戏内会显示成方块。"))
         layout.addWidget(identity)
 
-        layout.addWidget(_warning(
-            "角色名尽量用日语字库里有的字。超出字库的汉字在游戏内会显示成方块。"))
-
-        layout.addWidget(_section_title("作品（works）"))
-        works_group = theme.Group()
+        works_section = theme.Section("作品（works）")
         works_row = QHBoxLayout()
-        works_row.setSpacing(theme.SPACE_ROW)
+        works_row.setSpacing(tokens.GAP_CONTROL)
         self._works_box = QComboBox()
+        self._works_box.setAccessibleName("作品")
         works_row.addWidget(self._works_box, 1)
         new_works = QPushButton("新建…")
         new_works.clicked.connect(self._add_works)
@@ -120,51 +116,48 @@ class AddCharacterDialog(QDialog):
         manage_works = QPushButton("管理库…")
         manage_works.clicked.connect(self._manage_works)
         works_row.addWidget(manage_works)
-        works_group.add_layout(works_row)
-        layout.addWidget(works_group)
-
-        layout.addWidget(_warning(
+        works_section.add_layout(works_row)
+        works_section.add_block(_warning(
             "不填有效作品的话，游戏内选角界面按作品分类检索不到这个角色，"
             "多半只能在「最近使用」里出现，长时间不用就翻不出来了。"))
+        layout.addWidget(works_section)
 
-        layout.addWidget(_section_title("贴图（全身 / 半身 / 大头）"))
-        textures = theme.Group()
+        textures = theme.Section("贴图（全身 / 半身 / 大头）")
         quick = QPushButton("单图快速生成三张贴图…")
         quick.clicked.connect(self._open_crop)
-        textures.add(quick)
+        textures.add_block(quick)
         self._texture_labels: Dict[str, QLabel] = {}
         for key, label, file_name, size, _default in PANES:
-            row = theme.footnote_label("")
+            row = theme.label("", "caption")
             row.hide()
             self._texture_labels[key] = row
-            textures.add(row)
-        self._texture_hint = theme.secondary_label(
-            "不生成也能建角色，只是这个角色没有立绘——不会套用模板的乳蛙贴图。")
-        self._texture_hint.setWordWrap(True)
-        textures.add(self._texture_hint)
+            textures.add_block(row)
+        self._texture_hint = theme.wrapped_label(
+            "不生成也能建角色，只是这个角色没有立绘。不会套用模板的乳蛙贴图。", "secondary")
+        textures.add_block(self._texture_hint)
         layout.addWidget(textures)
         layout.addStretch(1)
 
-        self._error = QLabel()
-        self._error.setWordWrap(True)
-        self._error.setStyleSheet("color: {};".format(theme.SYSTEM["orange"]))
+        self._error = theme.wrapped_label("", "secondary")
         self._error.hide()
         outer.addWidget(self._error)
 
         buttons = QHBoxLayout()
+        buttons.setSpacing(tokens.GAP_CONTROL)
         buttons.addStretch(1)
         cancel = QPushButton("取消")
         cancel.clicked.connect(self.reject)
         buttons.addWidget(cancel)
         confirm = QPushButton("生成并写入 AZUR")
         confirm.setObjectName("Primary")
+        confirm.setDefault(True)
         confirm.clicked.connect(self._confirm)
         buttons.addWidget(confirm)
         outer.addLayout(buttons)
 
         self._reload_works(repository.DEFAULT_AZUR_WORKS_ID)
         self._update_final_id()
-        theme.apply_dark_titlebar(self)
+        theme.apply_titlebar(self)
 
     # -- 作品下拉 ---------------------------------------------------------
 
@@ -245,6 +238,10 @@ class AddCharacterDialog(QDialog):
             row.show()
         self._texture_hint.hide()
 
+    def _failed(self) -> bool:
+        """现在是不是正显示着一条错误 / Whether an error is on screen."""
+        return self._error.isVisible()
+
     # -- 提交 -------------------------------------------------------------
 
     def _update_final_id(self) -> None:
@@ -271,7 +268,8 @@ class AddCharacterDialog(QDialog):
 
     def _fail(self, message: str) -> None:
         """把错误摆在按钮上方 / Show the error next to the button that failed."""
-        self._error.setText(message)
+        theme.set_wrapped_text(self._error, message)
+        self._error.setStyleSheet("color: {};".format(theme.palette().error.text))
         self._error.show()
 
     def request(self) -> AddCharacterRequest:
@@ -301,28 +299,31 @@ class AddCharacterDialog(QDialog):
 
 
 def _row(label: str, widget: QWidget) -> QHBoxLayout:
-    """一行「标签 + 控件」/ One label-and-control row."""
+    """
+    一行「标签 + 控件」/ One label-and-control row.
+
+    标签是 ``body`` 加 ``text.primary``：规范 3.4 禁止把正常的行标题渲染成
+    小号灰字。
+    """
     row = QHBoxLayout()
-    row.setSpacing(theme.SPACE_ROW)
-    caption = theme.field_label(label)
-    caption.setFixedWidth(84)
+    row.setSpacing(tokens.GAP_CONTROL)
+    caption = theme.label(label, "body")
+    caption.setFixedWidth(96)
     caption.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+    caption.setBuddy(widget)
     row.addWidget(caption)
+    widget.setAccessibleName(label)
     row.addWidget(widget, 1)
     return row
 
 
-def _section_title(text: str) -> QLabel:
-    """分组标题，摆在框外 / The section title that sits outside the group."""
-    label = QLabel(text)
-    label.setObjectName("SectionTitle")
-    return label
-
-
 def _warning(text: str) -> QLabel:
-    """框外的补充说明 / The caption below a group."""
-    label = QLabel(text)
-    label.setWordWrap(True)
-    label.setStyleSheet("color: {}; font-size: {}px;".format(
-        theme.SYSTEM["orange"], theme.TYPE_CALLOUT))
+    """
+    组下面那句后果说明 / The consequence note below a section.
+
+    这些不是装饰性说明，是「不这么做会怎样」——规范 7.2 的安全信息例外要求
+    把后果写足，不能为了简洁删掉。
+    """
+    label = theme.wrapped_label(text, "secondary")
+    label.setStyleSheet("color: {};".format(theme.palette().warning.text))
     return label
